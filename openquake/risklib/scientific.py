@@ -19,7 +19,6 @@
 """
 This module includes the scientific API of the oq-risklib
 """
-from __future__ import division
 import abc
 import copy
 import bisect
@@ -33,7 +32,6 @@ from scipy import interpolate, stats, random
 from openquake.baselib.general import CallableDict, group_array
 from openquake.hazardlib.stats import compute_stats2
 from openquake.risklib import utils
-from openquake.baselib.python3compat import with_metaclass
 
 F32 = numpy.float32
 U32 = numpy.uint32
@@ -357,6 +355,7 @@ class VulnerabilityFunctionWithPMF(VulnerabilityFunction):
         self.dtype = numpy.dtype(ls)
 
     def init(self):
+        # the seed is reset in CompositeRiskModel.__init__
         self._probs_i1d = interpolate.interp1d(self.imls, self.probs)
         self.set_distribution(None)
 
@@ -402,8 +401,7 @@ class VulnerabilityFunctionWithPMF(VulnerabilityFunction):
 
     def sample(self, probs, _covs, idxs, epsilons):
         """
-        Sample the epsilons and applies the corrections to the probabilities.
-        This method is called only if there are epsilons.
+        Sample the .loss_ratios with the given probabilities.
 
         :param probs:
            array of E' floats
@@ -727,7 +725,7 @@ class FragilityModel(dict):
 DISTRIBUTIONS = CallableDict()
 
 
-class Distribution(with_metaclass(abc.ABCMeta)):
+class Distribution(metaclass=abc.ABCMeta):
     """
     A Distribution class models continuous probability distribution of
     random variables used to sample losses of a set of assets. It is
@@ -1292,8 +1290,7 @@ def losses_by_period(losses, return_periods, num_events, eff_time):
     NB: the return periods must be ordered integers >= 1. The interpolated
     losses are defined inside the interval min_time < time < eff_time
     where min_time = eff_time /len(losses). Outside the interval they
-    have NaN values. If there are less losses than events, the array
-    is filled with zeros. Here is an example:
+    have NaN values. Here is an example:
 
     >>> losses = [3, 2, 3.5, 4, 3, 23, 11, 2, 1, 4, 5, 7, 8, 9, 13]
     >>> losses_by_period(losses, [1, 2, 5, 10, 20, 50, 100], 20, 100)
@@ -1345,54 +1342,10 @@ class LossesByPeriodBuilder(object):
             array_stats = None
         return array, array_stats
 
-    # used in the EbrPostCalculator
-    def build_all(self, asset_values, loss_ratios, stats=()):
+    # used in postproc
+    def build(self, losses_by_event, stats=()):
         """
-        :param asset_values: a list of asset values
-        :param loss_ratios: an array of dtype lrs_dt
-        :param stats: list of pairs [(statname, statfunc), ...]
-        :returns: two composite arrays of shape (A, R, P) and (A, S, P)
-        """
-        # loss_ratios from lrgetter.get_all
-        A = len(asset_values)
-        R = len(self.weights)
-        P = len(self.return_periods)
-        array = numpy.zeros((A, R, P), self.loss_dt)
-        for a, asset_value in enumerate(asset_values):
-            r_recs = group_array(loss_ratios[a], 'rlzi').items()
-            for li, lt in enumerate(self.loss_dt.names):
-                aval = asset_value[lt.replace('_ins', '')]
-                for r, recs in r_recs:
-                    array[a, r][lt] = aval * losses_by_period(
-                        recs['ratios'][:, li], self.return_periods,
-                        self.num_events[r], self.eff_time)
-        return self.pair(array, stats)
-
-    # used in the LossCurvesExporter
-    def build_rlz(self, asset_values, loss_ratios, rlzi):
-        """
-        :param asset_values: a list of asset values
-        :param loss_ratios: a dictionary aid -> array of shape (E, LI)
-        :returns: a composite array of shape (A, P)
-        """
-        # loss_ratios from lrgetter.get, aid -> list of ratios
-        A, P = len(asset_values), len(self.return_periods)
-        array = numpy.zeros((A, P), self.loss_dt)
-        for a, asset_value in enumerate(asset_values):
-            try:
-                ratios = loss_ratios[a]  # shape (E, LI)
-            except KeyError:  # no loss ratios > 0 for the given asset
-                continue
-            for li, lt in enumerate(self.loss_dt.names):
-                aval = asset_value[lt.replace('_ins', '')]
-                array[a][lt] = aval * losses_by_period(
-                    ratios[:, li], self.return_periods,
-                    self.num_events[rlzi], self.eff_time)
-        return array
-
-    def build(self, agg_loss_table_array, stats=()):
-        """
-        :param agg_loss_table_array:
+        :param losses_by_event:
             the aggregate loss table as an array
         :param stats:
             list of pairs [(statname, statfunc), ...]
@@ -1401,17 +1354,25 @@ class LossesByPeriodBuilder(object):
         """
         P, R = len(self.return_periods), len(self.weights)
         array = numpy.zeros((P, R), self.loss_dt)
-        dic = group_array(agg_loss_table_array, 'rlzi')
+        dic = group_array(losses_by_event, 'rlzi')
         for r in dic:
             num_events = self.num_events[r]
             losses = dic[r]['loss']
             for lti, lt in enumerate(self.loss_dt.names):
                 ls = losses[:, lti].flatten()  # flatten only in ucerf
+                # NB: do not use squeeze or the gmf_ebrisk tests will break
                 lbp = losses_by_period(
                     ls, self.return_periods, num_events, self.eff_time)
                 array[:, r][lt] = lbp
         return self.pair(array, stats)
 
+    # used in event_based_risk
+    def build_curve(self, asset_value, loss_ratios, rlzi):
+        return asset_value * losses_by_period(
+            loss_ratios, self.return_periods,
+            self.num_events[rlzi], self.eff_time)
+
+    # used in event_based_risk
     def build_maps(self, losses, clp, stats=()):
         """
         :param losses: an array of shape (A, R, P)

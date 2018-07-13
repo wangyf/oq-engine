@@ -57,7 +57,7 @@ def get_valid_users(request):
         if request.user.is_authenticated:
             groups = request.user.groups.all()
             if groups:
-                users = list(User.objects.filter(groups__name__in=groups)
+                users = list(User.objects.filter(groups__in=groups)
                              .values_list('username', flat=True))
         else:
             # This may happen with crafted requests
@@ -99,7 +99,7 @@ def oq_server_context_processor(request):
     # this context var is also evaluated by the STANDALONE_APPS to identify
     # the running environment. Keep it as it is
     context['oq_engine_version'] = oqversion
-
+    context['server_name'] = settings.SERVER_NAME
     return context
 
 

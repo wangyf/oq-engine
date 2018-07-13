@@ -15,8 +15,6 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
-
-from __future__ import division
 import numpy
 from openquake.baselib import config
 
@@ -62,7 +60,7 @@ def max_rel_diff_index(curve_ref, curve, min_value=0.01):
     return maxdiff, maxindex
 
 
-def rmsep(array_ref, array, min_value=0.01):
+def rmsep(array_ref, array, min_value=0):
     """
     Root Mean Square Error Percentage for two arrays.
 
@@ -75,7 +73,7 @@ def rmsep(array_ref, array, min_value=0.01):
     ... [0.01, 0.02, 0.04, 0.06]])
     >>> curve = numpy.array([[0.011, 0.021, 0.031, 0.051],
     ... [0.012, 0.022, 0.032, 0.051]])
-    >>> str(round(rmsep(curve_ref, curve), 5))
+    >>> str(round(rmsep(curve_ref, curve, .01), 5))
     '0.11292'
     """
     bigvalues = array_ref > min_value
