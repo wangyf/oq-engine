@@ -440,6 +440,7 @@ def export_agglosses(ekey, dstore):
     unit_by_lt['occupants'] = 'people'
     agglosses = dstore[ekey[0]]
     fnames = []
+    writer = writers.CsvWriter(fmt=writers.FIVEDIGITS)
     for rlz in dstore['csm_info'].get_rlzs_assoc().realizations:
         loss = agglosses[rlz.ordinal]
         losses = []
@@ -450,7 +451,7 @@ def export_agglosses(ekey, dstore):
             stddev = loss[l]['stddev']
             losses.append((lt, unit, mean, stddev))
         dest = dstore.build_fname('agglosses', rlz, 'csv')
-        writers.write_csv(dest, losses, header=header)
+        writer.save(losses, dest, header)
         fnames.append(dest)
     return sorted(fnames)
 
