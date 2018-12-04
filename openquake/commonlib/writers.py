@@ -27,6 +27,7 @@ from openquake.baselib.node import scientificformat
 from openquake.baselib.python3compat import encode
 
 FIVEDIGITS = '%.5E'
+SIXDIGITS = '%.6E'
 
 
 class HeaderTranslator(object):
@@ -252,7 +253,7 @@ class CsvWriter(object):
     """
     Class used in the exporters to save a bunch of CSV files
     """
-    def __init__(self, sep=',', fmt=FIVEDIGITS, comment={}):
+    def __init__(self, sep=',', fmt=SIXDIGITS, comment={}):
         self.sep = sep
         self.fmt = fmt
         self.comment = comment

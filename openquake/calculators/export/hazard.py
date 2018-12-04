@@ -103,7 +103,7 @@ def export_ruptures_csv(ekey, dstore):
                  rgetter.trt, r['strike'], r['dip'], r['rake'],
                  r['boundary']))
     rows.sort()  # by rupture serial
-    writer = writers.CsvWrite(sep='\t', comment={
+    writer = writers.CsvWriter(sep='\t', comment={
         'investigation_time': oq.investigation_time,
         'ses_per_logic_tree_path': oq.ses_per_logic_tree_path})
     writer.save(rows, dest, header)
