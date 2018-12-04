@@ -252,9 +252,10 @@ class CsvWriter(object):
     """
     Class used in the exporters to save a bunch of CSV files
     """
-    def __init__(self, sep=',', fmt='%12.8E'):
+    def __init__(self, sep=',', fmt=FIVEDIGITS, comment={}):
         self.sep = sep
         self.fmt = fmt
+        self.comment = comment
         self.fnames = set()
 
     def save(self, data, fname, header=None):
@@ -265,7 +266,10 @@ class CsvWriter(object):
         :param fname: path name
         :param header: header to use
         """
-        write_csv(fname, data, self.sep, self.fmt, header)
+        comment = ', '.join(
+            '%s=%s' % item for item in self.comment.items()
+        ) if self.comment else None
+        write_csv(fname, data, self.sep, self.fmt, header, comment)
         self.fnames.add(getattr(fname, 'name', fname))
 
     def save_block(self, data, dest):
