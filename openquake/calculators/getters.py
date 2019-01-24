@@ -474,7 +474,7 @@ def get_rupture_getters(dstore, slc=slice(None), split=0, hdf5cache=None,
     :returns: a list of RuptureGetters
     """
     csm_info = dstore['csm_info']
-    grp_trt = csm_info.grp_by("trt")
+    trt_by = csm_info.grp_by("trt")
     samples = csm_info.get_samples_by_grp()
     rlzs_by_gsim = csm_info.get_rlzs_by_gsim_grp()
     rup_array = dstore['ruptures'][slc]
@@ -491,7 +491,7 @@ def get_rupture_getters(dstore, slc=slice(None), split=0, hdf5cache=None,
             continue
         rgetter = RuptureGetter(
             hdf5cache or dstore.hdf5path, code2cls, rups,
-            grp_trt[grp_id], samples[grp_id], rlzs_by_gsim[grp_id])
+            trt_by[grp_id], samples[grp_id], rlzs_by_gsim[grp_id])
         rgetter.weight = block.weight if split else len(block)
         rgetters.append(rgetter)
     return rgetters
@@ -637,3 +637,27 @@ class RuptureGetter(object):
     def __repr__(self):
         return '<%s grp_id=%d, %d rupture(s)>' % (
             self.__class__.__name__, self.grp_id, len(self))
+
+
+def get_hazard(hdf5path, sids):
+    with datastore.read(hdf5path) as dstore:
+        oq = dstore['oqparam']
+        sitecol = dstore['sitecol'].filtered(sids)
+        rup_array = dstore['ruptures'].value
+        srcfilter = calc.filters.SourceFilter(sitecol, oq.maximum_distance)
+        csm_info = dstore['csm_info']
+        trt_by = csm_info.grp_by("trt")
+        samples = csm_info.get_samples_by_grp()
+        rlzs_by_gsim = csm_info.get_rlzs_by_gsim_grp()
+        code2cls = get_code2cls(dstore.get_attrs('ruptures'))
+    hazard = []
+    for grp_id, rups in general.group_array(rup_array, 'grp_id'):
+       rg = RuptureGetter(
+           hdf5path, code2cls, rup_array, trt_by[grp_id],
+           samples[grp_id], rlzs_by_gsim[grp_id])
+       gg = GmfGetter(
+           rlzs_by_gsim[grp_id], rg.get_ruptures(srcfilter),
+           sitecol, oqparam, min_iml)
+       hazard.extend(g.gen_gmfs())
+    if hazard:
+        return numpy.concatenate(hazard)

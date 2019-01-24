@@ -224,6 +224,8 @@ class EventBasedCalculator(base.HazardCalculator):
         with hdf5.File(hdf5cache, 'r+') as cache:
             if 'rupgeoms' not in cache:
                 dstore.hdf5.copy('rupgeoms', cache)
+                dstore.hdf5.copy('ruptures', cache)
+                cache['min_iml'] = self.oqparam.minimum_intensity
         rgetters = get_rupture_getters(
             dstore, split=self.oqparam.concurrent_tasks, hdf5cache=hdf5cache,
             rup_weight=rup_weight or self.rup_weight)
