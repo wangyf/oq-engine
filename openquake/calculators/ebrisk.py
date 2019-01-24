@@ -332,8 +332,8 @@ def ebrisk_by_site(sids, csm_info, hdf5path, param, monitor):
                 'times': times}
 
 
-@base.calculators.add('ebrisk')
-class EbriskBySiteCalculator(event_based.EventBasedCalculator):
+#@base.calculators.add('ebrisk')
+class EbriskBySiteCalculator(EbriskCalculator):
     """
     Event based PSHA calculator generating event loss tables
     """
@@ -345,7 +345,8 @@ class EbriskBySiteCalculator(event_based.EventBasedCalculator):
         # save a copy of the assetcol in hdf5cache
         self.hdf5cache = self.datastore.hdf5cache()
         with hdf5.File(self.hdf5cache) as cache:
-            cache['assetcol'] = self.assetcol
+            if 'assetcol' not in cache:
+                cache['assetcol'] = self.assetcol
         self.param['imts'] = list(self.oqparam.imtls)
         self.param['aggregate_by'] = self.oqparam.aggregate_by
         self.N = len(self.sitecol.complete)
@@ -368,115 +369,3 @@ class EbriskBySiteCalculator(event_based.EventBasedCalculator):
             weight=by_taxon,
         ).reduce(self.agg_dicts, numpy.zeros(self.N))
         return acc
-
-    def agg_dicts(self, acc, dic):
-        """
-        :param dummy: unused parameter
-        :param dic: a dictionary with keys eids, losses, losses_by_RN
-        """
-        self.oqparam.ground_motion_fields = False  # hack
-        if 'losses_by_event' not in set(self.datastore):  # first time
-            L = len(self.riskmodel.lti)
-            shp = self.get_shape(len(self.eid2idx), L)
-            logging.info('Creating losses_by_event of shape %s, %s', shp,
-                         humansize(numpy.product(shp) * 4))
-            self.datastore.create_dset('losses_by_event', F32, shp)
-        if len(dic['losses']):
-            with self.monitor('saving losses_by_event', autoflush=True):
-                lbe = self.datastore['losses_by_event']
-                idx = [self.eid2idx[eid] for eid in dic['eids']]
-                sort_idx, sort_arr = zip(*sorted(zip(idx, dic['losses'])))
-                # h5py requires the indices to be sorted
-                lbe[list(sort_idx)] = numpy.array(sort_arr)
-        with self.monitor('saving losses_by_site', autoflush=True):
-            for r, arr in dic['losses_by_RN'].items():
-                self.datastore['losses_by_site'][:, r] += arr
-        return acc + dic['times']
-
-    def get_shape(self, *sizes):
-        return self.assetcol.tagcol.agg_shape(sizes, self.oqparam.aggregate_by)
-
-    def build_datasets(self, builder):
-        oq = self.oqparam
-        stats = oq.risk_stats()
-        R = len(builder.weights)
-        S = len(stats)
-        L = len(self.riskmodel.lti)
-        P = len(builder.return_periods)
-        C = len(oq.conditional_loss_poes)
-        loss_types = ' '.join(self.riskmodel.loss_types)
-        if oq.individual_curves or R == 1:
-            shp = self.get_shape(P, R, L)
-            self.datastore.create_dset('agg_curves-rlzs', F32, shp)
-            self.datastore.set_attrs(
-                'agg_curves-rlzs', return_periods=builder.return_periods,
-                loss_types=loss_types)
-        if oq.conditional_loss_poes:
-            shp = self.get_shape(C, R, L)
-            self.datastore.create_dset('agg_maps-rlzs', F32, shp)
-        if R > 1:
-            shp = self.get_shape(P, S, L)
-            self.datastore.create_dset('agg_curves-stats', F32, shp)
-            self.datastore.set_attrs(
-                'agg_curves-stats', return_periods=builder.return_periods,
-                stats=[encode(name) for (name, func) in stats],
-                loss_types=loss_types)
-            if oq.conditional_loss_poes:
-                shp = self.get_shape(C, S, L)
-                self.datastore.create_dset('agg_maps-stats', F32, shp)
-                self.datastore.set_attrs(
-                    'agg_maps-stats',
-                    stats=[encode(name) for (name, func) in stats],
-                    loss_types=loss_types)
-
-    def post_execute(self, times):
-        """
-        Compute and store average losses from the losses_by_event dataset,
-        and then loss curves and maps.
-        """
-        if self.rupweights:
-            self.datastore['rupweights'] = self.rupweights
-        del self.rupweights
-        self.datastore.set_attrs('task_info/ebrisk_by_site', times=times)
-        logging.info('Building losses_by_rlz')
-        with self.monitor('building avg_losses-rlzs', autoflush=True):
-            self.build_avg_losses()
-        oq = self.oqparam
-        builder = get_loss_builder(self.datastore)
-        self.build_datasets(builder)
-        mon = performance.Monitor(hdf5=hdf5.File(self.datastore.hdf5cache()))
-        smap = parallel.Starmap(compute_loss_curves_maps, monitor=mon)
-        first = self.datastore['losses_by_event'][0]  # to get the multi_index
-        self.datastore.close()
-        acc = []
-        for idx, _ in numpy.ndenumerate(first):
-            smap.submit(self.datastore.hdf5path, idx,
-                        oq.conditional_loss_poes, oq.individual_curves)
-        for res in smap:
-            idx = res.pop('idx')
-            for name, arr in res.items():
-                if arr is not None:
-                    acc.append((name, idx, arr))
-        # copy performance information from the cache to the datastore
-        pd = mon.hdf5['performance_data'].value
-        hdf5.extend3(self.datastore.hdf5path, 'performance_data', pd)
-        self.datastore.open('r+')  # reopen
-        self.datastore['task_info/compute_loss_curves_and_maps'] = (
-            mon.hdf5['task_info/compute_loss_curves_maps'].value)
-        with self.monitor('saving loss_curves and maps', autoflush=True):
-            for name, idx, arr in acc:
-                for ij, val in numpy.ndenumerate(arr):
-                    self.datastore[name][ij + idx] = val
-
-    def build_avg_losses(self):
-        """
-        Build the dataset avg_losses-rlzs from losses_by_event
-        """
-        indices = self.datastore.get_attr('events', 'indices')
-        R = len(indices)
-        dset = self.datastore['losses_by_event']
-        E, L, *shp = dset.shape
-        lbr = self.datastore.create_dset(
-            'avg_losses-rlzs', F32, [L, R] + shp)
-        for r, (s1, s2) in enumerate(indices):
-            lbr[:, r] = dset[s1:s2].sum(axis=0) * self.oqparam.ses_ratio
