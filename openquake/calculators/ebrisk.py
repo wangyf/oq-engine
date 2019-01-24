@@ -293,6 +293,45 @@ class EbriskCalculator(event_based.EventBasedCalculator):
             lbr[:, r] = dset[s1:s2].sum(axis=0) * self.oqparam.ses_ratio
 
 
+def ebrisk_by_site(sids, csm_info, hdf5path, param, monitor):
+    with datastore.read(hdf5path) as dstore:
+        riskmodel = param['riskmodel']
+        L = len(riskmodel.lti)
+        mon = monitor('getting assets', measuremem=False)
+        mon.counts = 1
+        with datastore.read(hdf5path) as dstore:
+            assgetter = getters.AssetGetter(dstore)
+        with monitor('getting hazard'):
+            eids = dstore['events']['eid']
+            e2i = {eid: idx for idx, eid in enumerate(eids)}
+            hazard, srcfilter = getters.get_hazard(dstore, csm_info, sids)
+        N = len(srcfilter.sitecol.complete)
+        with monitor('building risk'):
+            tagnames = param['aggregate_by']
+            shape = assgetter.tagcol.agg_shape((len(eids), L), tagnames)
+            acc = numpy.zeros(shape, F32)  # shape (E, L, T, ...)
+            if param['avg_losses']:
+                losses_by_RN = AccumDict(accum=numpy.zeros((N, L), F32))
+            else:
+                losses_by_RN = {}
+            times = numpy.zeros(N)  # risk time per site_id
+            for sid, haz in hazard.items():
+                t0 = time.time()
+                assets, tagidxs = assgetter.get(sid, tagnames)
+                mon.duration += time.time() - t0
+                for lt, asset, ratios in gen_risk(
+                        assets, riskmodel, haz, param['imts']):
+                    lti = riskmodel.lti[lt]
+                    losses = ratios * asset.value(lt)
+                    for eid, rlz, loss in zip(haz['eid'], haz['rlzi'], losses):
+                        acc[(e2i[eid], lti) + tagidxs[asset.ordinal]] += loss
+                        if param['avg_losses']:
+                            losses_by_RN[rlz][sid, lti] += loss
+                times[sid] = time.time() - t0
+        return {'losses': acc, 'eids': eids, 'losses_by_RN': losses_by_RN,
+                'times': times}
+
+
 @base.calculators.add('ebrisk')
 class EbriskBySiteCalculator(event_based.EventBasedCalculator):
     """
@@ -307,6 +346,7 @@ class EbriskBySiteCalculator(event_based.EventBasedCalculator):
         self.hdf5cache = self.datastore.hdf5cache()
         with hdf5.File(self.hdf5cache) as cache:
             cache['assetcol'] = self.assetcol
+        self.param['imts'] = list(self.oqparam.imtls)
         self.param['aggregate_by'] = self.oqparam.aggregate_by
         self.N = len(self.sitecol.complete)
         # initialize the riskmodel
@@ -317,18 +357,17 @@ class EbriskBySiteCalculator(event_based.EventBasedCalculator):
         self.datastore.create_dset('losses_by_site', F32, (self.N, self.R, L))
         self.rupweights = []
 
-    def acc0(self):
-        return numpy.zeros(self.N)
-
-    def rup_weight(self, rup):
-        """
-        :returns: the number of taxonomies affected by the rupture
-        """
-        trt = self.csm_info.trt_by_grp[rup['grp_id']]
-        sids = self.src_filter.close_sids(rup, trt, rup['mag'])
-        weight = self.num_taxonomies[sids].sum()
-        self.rupweights.append(weight)
-        return weight
+    def execute(self):
+        by_taxon = self.num_taxonomies.__getitem__
+        hdf5cache = self.datastore.parent.hdf5cache()
+        sids = sorted(self.sitecol.sids, key=by_taxon)
+        csm_info = self.datastore['csm_info']
+        acc = parallel.Starmap.apply(
+            ebrisk_by_site,
+            (sids, csm_info, hdf5cache, self.param, self.monitor()),
+            weight=by_taxon,
+        ).reduce(self.agg_dicts, numpy.zeros(self.N))
+        return acc
 
     def agg_dicts(self, acc, dic):
         """
@@ -398,7 +437,7 @@ class EbriskBySiteCalculator(event_based.EventBasedCalculator):
         if self.rupweights:
             self.datastore['rupweights'] = self.rupweights
         del self.rupweights
-        self.datastore.set_attrs('task_info/ebrisk', times=times)
+        self.datastore.set_attrs('task_info/ebrisk_by_site', times=times)
         logging.info('Building losses_by_rlz')
         with self.monitor('building avg_losses-rlzs', autoflush=True):
             self.build_avg_losses()

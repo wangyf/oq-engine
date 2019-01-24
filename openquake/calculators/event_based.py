@@ -305,6 +305,9 @@ class EventBasedCalculator(base.HazardCalculator):
         n_unique_events = len(numpy.unique(events['eid']))
         assert n_unique_events == len(events), (n_unique_events, len(events))
         self.datastore['events'] = events
+        with hdf5.File(self.datastore.hdf5cache(), 'r+') as cache:
+            cache['oqparam'] = self.oqparam
+            cache['events'] = events
         indices = numpy.zeros((self.R, 2), U32)
         for r, [startstop] in get_indices(events['rlz']).items():
             indices[r] = startstop
