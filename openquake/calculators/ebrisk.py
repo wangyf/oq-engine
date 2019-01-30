@@ -79,41 +79,40 @@ def ebrisk(rupgetter, srcfilter, param, monitor):
     getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
     with monitor('getting hazard'):
         getter.init()  # instantiate the computers
-        hazard = getter.get_hazard()  # sid -> (rlzi, sid, eid, gmv)
+        hazard = getter.get_hazard_NEM()
     mon_avg = monitor('building avg_losses', measuremem=False)
     mon_risk = monitor('computing risk', measuremem=False)
     with monitor('building risk'):
         imts = getter.imts
-        eids = rupgetter.get_eid_rlz()['eid']
-        eid2idx = {eid: idx for idx, eid in enumerate(eids)}
+        eidrlz = rupgetter.get_eid_rlz()
         tagnames = param['aggregate_by']
-        shape = assgetter.tagcol.agg_shape((len(eids), L), tagnames)
+        shape = assgetter.tagcol.agg_shape((len(eidrlz), L), tagnames)
         acc = numpy.zeros(shape, F32)  # shape (E, L, T, ...)
         if param['avg_losses']:
             losses_by_RN = numpy.zeros((rupgetter.num_rlzs, N, L), F32)
         else:
             losses_by_RN = None
         times = numpy.zeros(N)  # risk time per site_id
-        for sid, haz in hazard.items():
+        for sid, gmvs in enumerate(hazard):
             t0 = time.time()
             assets_on_sid, tagidxs = assgetter.get(sid, tagnames)
             mon.duration += time.time() - t0
-            eidx = [eid2idx[eid] for eid in haz['eid']]
             with mon_risk:
                 assets_ratios = get_assets_ratios(
-                    assets_on_sid, riskmodel, haz['gmv'], imts)
+                    assets_on_sid, riskmodel, gmvs, imts)
             for assets, ratios in assets_ratios:
                 for lt, lti in riskmodel.lti.items():
                     loss_ratios = ratios[lti]
                     for asset in assets:
                         losses = loss_ratios * asset.value(lt)
-                        acc[(eidx, lti) + tagidxs[asset.ordinal]] += losses
+                        idx = (slice(None), lti) + tagidxs[asset.ordinal]
+                        acc[idx] += losses
                         if param['avg_losses']:
                             with mon_avg:
                                 losses_by_RN[:, sid, lti] += rupgetter.E2R(
-                                    losses, haz['rlzi'])
+                                    losses, eidrlz['rlz'])
             times[sid] = time.time() - t0
-    return {'losses': acc, 'eids': eids, 'losses_by_RN':
+    return {'losses': acc, 'eids': eidrlz['eid'], 'losses_by_RN':
             (rupgetter.rlzs, losses_by_RN), 'times': times}
 
 

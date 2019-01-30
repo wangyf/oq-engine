@@ -616,6 +616,12 @@ class EBRupture(object):
             rlzs.extend([rlz] * len(eids))
         return numpy.fromiter(zip(all_eids, rlzs), events_dt)
 
+    def num_events(self, num_rlzs):
+        """
+        :returns: the number of events produced by the rupture
+        """
+        return self.n_occ if self.samples > 1 else self.n_occ * num_rlzs
+
     def get_eids(self, num_rlzs):
         """
         :param num_rlzs: the number of realizations for the given group

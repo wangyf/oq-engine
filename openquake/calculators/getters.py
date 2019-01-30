@@ -409,6 +409,25 @@ class GmfGetter(object):
                     n += e
             yield numpy.array(data, self.gmv_dt)
 
+    def get_hazard_NEM(self):
+        """
+        :returns: an array of GMVs of shape (N, E, M)
+        """
+        M = len(self.imtls)
+        E = self.rupgetter.num_events
+        data = numpy.zeros((self.N, E, M), F32)
+        e = 0
+        for computer in self.computers:
+            for gs, rlzs in self.rlzs_by_gsim.items():
+                ne = computer.rupture.num_events(len(rlzs))
+                array = computer.compute(gs, ne)
+                for i, miniml in enumerate(self.min_iml):  # gmv < minimum
+                    arr = array[i]  # shape (ns, ne)
+                    arr[arr < miniml] = 0
+                    data[computer.sids, e: e + ne, i] = arr
+                e += ne
+        return data
+
     def get_gmfdata(self):
         """
         :returns: an array of the dtype (sid, eid, imti, gmv)
@@ -558,7 +577,7 @@ class RuptureGetter(object):
                 self.rlz2idx[rlz] = nr
                 rlzi.append(rlz)
                 nr += 1
-        n_occ = rup_array['n_occ'].sum()
+        n_occ = int(rup_array['n_occ'].sum())
         self.num_events = n_occ if samples > 1 else n_occ * nr
         self.rlzs = numpy.array(rlzi)
 
