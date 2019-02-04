@@ -233,6 +233,7 @@ def _digitize_lons(lons, lon_bins):
         return numpy.digitize(lons, lon_bins) - 1
 
 
+# this is used in the hazardlib tests, not in the engine
 def disaggregation(
         sources, site, imt, iml, gsim_by_trt, truncation_level,
         n_epsilons, mag_bin_width, dist_bin_width, coord_bin_width,
@@ -305,13 +306,14 @@ def disaggregation(
     trts = sorted(set(src.tectonic_region_type for src in sources))
     trt_num = dict((trt, i) for i, trt in enumerate(trts))
     rlzs_by_gsim = {gsim_by_trt[trt]: [0] for trt in trts}
-    cmaker = ContextMaker(rlzs_by_gsim, source_filter.integration_distance,
-                          {'filter_distance': filter_distance})
     iml = make_iml({str(imt): iml})
     by_trt = groupby(sources, operator.attrgetter('tectonic_region_type'))
     bdata = {}
     sitecol = SiteCollection([site])
     for trt, srcs in by_trt.items():
+        cmaker = ContextMaker(
+            trt, rlzs_by_gsim, source_filter.integration_distance,
+            {'filter_distance': filter_distance})
         bdata[trt] = collect_bin_data(
             srcs, sitecol, cmaker, iml, truncation_level, n_epsilons)
     if sum(len(bd.mags) for bd in bdata.values()) == 0:
