@@ -15,7 +15,6 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
-import logging
 import operator
 import time
 import numpy
@@ -55,20 +54,15 @@ def get_assets_ratios(assets, riskmodel, gmvs, imts):
     return assets_ratios
 
 
-def start_ebrisk(rupgetter, srcfilter, param, monitor):
+def weight_ruptures(rupgetter, srcfilter, num_taxonomies, monitor):
     """
-    Launcher for ebrisk tasks
+    Calls rupgetter.set_weights
     """
-    with monitor('weighting ruptures'):
-        rupgetter.set_weights(srcfilter, param['num_taxonomies'])
-    if rupgetter.weights.sum() <= param['maxweight']:
-        yield ebrisk(rupgetter, srcfilter, param, monitor)
-    else:
-        for rgetter in rupgetter.split(param['maxweight']):
-            yield ebrisk, rgetter, srcfilter, param
+    rupgetter.set_weights(srcfilter, num_taxonomies)
+    return rupgetter
 
 
-def ebrisk(rupgetter, srcfilter, param, monitor):
+def ebrisk(rupgetters, srcfilter, param, monitor):
     """
     :param rupgetter:
         a RuptureGetter instance
@@ -87,54 +81,56 @@ def ebrisk(rupgetter, srcfilter, param, monitor):
     mon = monitor('getting assets', measuremem=False)
     with datastore.read(srcfilter.filename) as dstore:
         assgetter = getters.AssetGetter(dstore)
-    getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
-    with monitor('getting hazard'):
-        getter.init()  # instantiate the computers
-        hazard = getter.get_hazard()  # sid -> (rlzi, sid, eid, gmv)
-    mon_risk = monitor('computing losses', measuremem=False)
-    mon_agg = monitor('aggregating losses', measuremem=False)
-    imts = getter.imts
-    events = rupgetter.get_eid_rlz()
-    eid2idx = {eid: idx for idx, eid in enumerate(events['eid'])}
-    tagnames = param['aggregate_by']
-    shape = assgetter.tagcol.agg_shape((len(events), L), tagnames)
-    elt_dt = [('eid', U64), ('rlzi', U16), ('loss', (F32, shape[1:]))]
-    acc = numpy.zeros(shape, F32)  # shape (E, L, T...)
-    if param['avg_losses']:
-        losses_by_A = numpy.zeros((assgetter.num_assets, L), F32)
-    else:
-        losses_by_A = None
-    times = numpy.zeros(N)  # risk time per site_id
-    for sid, haz in hazard.items():
-        t0 = time.time()
-        weights = getter.weights[haz['rlzi']]
-        assets_on_sid, tagidxs = assgetter.get(sid, tagnames)
-        eidx = [eid2idx[eid] for eid in haz['eid']]
-        mon.duration += time.time() - t0
-        mon.counts += 1
-        with mon_risk:
-            assets_ratios = get_assets_ratios(
-                assets_on_sid, riskmodel, haz['gmv'], imts)
-        with mon_agg:
-            for assets, triples in assets_ratios:
-                for lti, (lt, imt, loss_ratios) in enumerate(triples):
-                    w = weights[imt]
-                    for asset in assets:
-                        aid = asset.ordinal
-                        losses = loss_ratios * asset.value(lt)
-                        acc[(eidx, lti) + tagidxs[aid]] += losses
-                        if param['avg_losses']:
-                            losses_by_A[aid, lti] += losses @ w
-            times[sid] = time.time() - t0
-    with monitor('building event loss table'):
-        elt = numpy.fromiter(
-            ((event['eid'], event['rlz'], losses)
-             for event, losses in zip(events, acc) if losses.sum()), elt_dt)
-        agg = general.AccumDict(accum=numpy.zeros(shape[1:], F32))  # rlz->agg
-        for rec in elt:
-            agg[rec['rlzi']] += rec['loss'] * param['ses_ratio']
-    return {'elt': elt, 'agg_losses': agg, 'losses_by_A': losses_by_A,
-            'times': times}
+    for rupgetter in rupgetters:
+        getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
+        with monitor('getting hazard'):
+            getter.init()  # instantiate the computers
+            hazard = getter.get_hazard()  # sid -> (rlzi, sid, eid, gmv)
+        mon_risk = monitor('computing losses', measuremem=False)
+        mon_agg = monitor('aggregating losses', measuremem=False)
+        imts = getter.imts
+        events = rupgetter.get_eid_rlz()
+        eid2idx = {eid: idx for idx, eid in enumerate(events['eid'])}
+        tagnames = param['aggregate_by']
+        shape = assgetter.tagcol.agg_shape((len(events), L), tagnames)
+        elt_dt = [('eid', U64), ('rlzi', U16), ('loss', (F32, shape[1:]))]
+        acc = numpy.zeros(shape, F32)  # shape (E, L, T...)
+        if param['avg_losses']:
+            losses_by_A = numpy.zeros((assgetter.num_assets, L), F32)
+        else:
+            losses_by_A = None
+        times = numpy.zeros(N)  # risk time per site_id
+        for sid, haz in hazard.items():
+            t0 = time.time()
+            weights = getter.weights[haz['rlzi']]
+            assets_on_sid, tagidxs = assgetter.get(sid, tagnames)
+            eidx = [eid2idx[eid] for eid in haz['eid']]
+            mon.duration += time.time() - t0
+            mon.counts += 1
+            with mon_risk:
+                assets_ratios = get_assets_ratios(
+                    assets_on_sid, riskmodel, haz['gmv'], imts)
+            with mon_agg:
+                for assets, triples in assets_ratios:
+                    for lti, (lt, imt, loss_ratios) in enumerate(triples):
+                        w = weights[imt]
+                        for asset in assets:
+                            aid = asset.ordinal
+                            losses = loss_ratios * asset.value(lt)
+                            acc[(eidx, lti) + tagidxs[aid]] += losses
+                            if param['avg_losses']:
+                                losses_by_A[aid, lti] += losses @ w
+                times[sid] = time.time() - t0
+        with monitor('building event loss table'):
+            elt = numpy.fromiter(
+                ((event['eid'], event['rlz'], losses)
+                 for event, losses in zip(events, acc) if losses.sum()),
+                elt_dt)
+            agg = general.AccumDict(accum=numpy.zeros(shape[1:], F32))
+            for rec in elt:
+                agg[rec['rlzi']] += rec['loss'] * param['ses_ratio']
+        yield {'elt': elt, 'agg_losses': agg, 'losses_by_A': losses_by_A,
+               'times': times}
 
 
 @base.calculators.add('ebrisk')
@@ -142,7 +138,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
     """
     Event based PSHA calculator generating event loss tables
     """
-    core_task = start_ebrisk
+    core_task = ebrisk
     is_stochastic = True
     precalc = 'event_based'
     accept_precalc = ['event_based', 'event_based_risk', 'ucerf_hazard']
@@ -170,11 +166,31 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         shp = self.get_shape(self.L, self.R)  # shape L, R, T...
         self.datastore.create_dset('agg_losses-rlzs', F32, shp)
 
+    def get_rupture_getters(self, nruptures, grp_indices, hdf5path):
+        num_taxonomies = self.assetcol.num_taxonomies_by_site()
+        smap = parallel.Starmap(weight_ruptures)
+        trt_by_grp = self.csm_info.grp_by("trt")
+        samples = self.csm_info.get_samples_by_grp()
+        rlzs_by_gsim_grp = self.csm_info.get_rlzs_by_gsim_grp()
+        ct = self.oqparam.concurrent_tasks or 1
+        ruptures_per_block = numpy.ceil(nruptures / ct)
+        for grp_id, rlzs_by_gsim in rlzs_by_gsim_grp.items():
+            start, stop = grp_indices[grp_id]
+            for indices in general.block_splitter(
+                    range(start, stop), ruptures_per_block):
+                rgetter = getters.RuptureGetter(
+                    hdf5path, list(indices), grp_id,
+                    trt_by_grp[grp_id], samples[grp_id], rlzs_by_gsim)
+                smap.submit(rgetter, self.src_filter, num_taxonomies)
+        rgetters = list(smap)
+        mean_weight = numpy.mean([rg.weight for rg in rgetters])
+        send = []
+        for rgetter in rgetters:
+            send.extend(rgetter.split(mean_weight))
+        return send
+
     def execute(self):
-        oq = self.oqparam
-        self.set_param(
-            num_taxonomies=self.assetcol.num_taxonomies_by_site(),
-            maxweight=oq.ebrisk_maxweight / (oq.concurrent_tasks or 1))
+        self.set_param()
         parent = self.datastore.parent
         if parent:
             hdf5path = parent.filename
@@ -191,18 +207,13 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         self.init_logic_tree(self.csm_info)
         smap = parallel.Starmap(
             self.core_task.__func__, monitor=self.monitor())
-        trt_by_grp = self.csm_info.grp_by("trt")
-        samples = self.csm_info.get_samples_by_grp()
-        rlzs_by_gsim_grp = self.csm_info.get_rlzs_by_gsim_grp()
-        ruptures_per_block = numpy.ceil(nruptures / (oq.concurrent_tasks or 1))
-        for grp_id, rlzs_by_gsim in rlzs_by_gsim_grp.items():
-            start, stop = grp_indices[grp_id]
-            for indices in general.block_splitter(
-                    range(start, stop), ruptures_per_block):
-                rgetter = getters.RuptureGetter(
-                    hdf5path, list(indices), grp_id,
-                    trt_by_grp[grp_id], samples[grp_id], rlzs_by_gsim)
-                smap.submit(rgetter, self.src_filter, self.param)
+        rgetters = self.get_rupture_getters(nruptures, grp_indices, hdf5path)
+        ct = self.oqparam.concurrent_tasks or 1
+        smap = parallel.Starmap.apply(
+            self.core_task.__func__,
+            (rgetters, self.src_filter, self.param, self.monitor()),
+            concurrent_tasks=ct, weight=operator.attrgetter('weight'),
+            key=operator.attrgetter('grp_id'))
         return smap.reduce(self.agg_dicts, numpy.zeros(self.N))
 
     def agg_dicts(self, acc, dic):
@@ -264,7 +275,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         Compute and store average losses from the losses_by_event dataset,
         and then loss curves and maps.
         """
-        self.datastore.set_attrs('task_info/start_ebrisk', times=times)
+        self.datastore.set_attrs('task_info/ebrisk', times=times)
         oq = self.oqparam
         elt_length = len(self.datastore['losses_by_event'])
         builder = get_loss_builder(self.datastore)
