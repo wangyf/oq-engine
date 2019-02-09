@@ -172,7 +172,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         #num_taxonomies = self.assetcol.num_taxonomies_by_site()
         a_by_s = self.assetcol.get_assets_by_sid()
         num_assets = numpy.array(  # number of assets per site
-            [len(a_by_s[sid]) for sid in self.sitecol.complete.sids])
+            [len(a_by_s.get(sid, [])) for sid in self.sitecol.complete.sids])
         smap = parallel.Starmap(weight_ruptures, monitor=self.monitor())
         trt_by_grp = self.csm_info.grp_by("trt")
         samples = self.csm_info.get_samples_by_grp()
