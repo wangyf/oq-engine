@@ -400,7 +400,7 @@ class AssetCollection(object):
             assets_by_site, tagcol.tagnames)
         if self.occupancy_periods and not occupancy_periods:
             logging.warning('Missing <occupancyPeriods>%s</occupancyPeriods> '
-                         'in the exposure', self.occupancy_periods)
+                            'in the exposure', self.occupancy_periods)
         elif self.occupancy_periods.strip() != occupancy_periods.strip():
             raise ValueError('Expected %s, got %s' %
                              (occupancy_periods, self.occupancy_periods))
@@ -441,6 +441,16 @@ class AssetCollection(object):
                 tag = self.tagcol.get_tag(tagname, tagidx)
                 aids_by_tag[tag].add(aid)
         return aids_by_tag
+
+    def get_assets_by_sid(self):
+        """
+        :returns: a dictionary of arrays with fields 'aid', 'taxonomy'
+        """
+        asset_dt = numpy.dtype([('aid', U32), ('taxonomy', U16)])
+        acc = general.AccumDict(accum=[])
+        for aid, rec in enumerate(self.array):
+            acc[rec['site_id']].append((aid, rec['taxonomy']))
+        return {sid: numpy.array(acc[sid], asset_dt) for sid in acc}
 
     @property
     def taxonomies(self):
@@ -487,11 +497,25 @@ class AssetCollection(object):
             the values of the exposure aggregated by tagnames as an array
             of shape (T1, T2, ..., L)
         """
+        return self.aggregate_by(list(tagnames), self.get_values())
+
+    def get_tagidxs(self, tagnames):
+        """
+        :returns: an array of indices of shape (A, T)
+        """
+        out = [tuple(idx - 1 for idx in rec[tagnames]) if tagnames else ()
+               for rec in self.array]
+        return numpy.array(out)
+
+    def get_values(self):
+        """
+        :returns: an array of asset values of shape (A, L)
+        """
         aval = numpy.zeros((len(self), len(self.loss_types)), F32)  # (A, L)
         for asset in self:
             for lti, lt in enumerate(self.loss_types):
                 aval[asset.ordinal, lti] = asset.value(lt)
-        return self.aggregate_by(list(tagnames), aval)
+        return aval
 
     def reduce(self, sitecol):
         """

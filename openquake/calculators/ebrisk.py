@@ -34,7 +34,7 @@ U64 = numpy.uint64
 
 def get_assets_ratios(assets, riskmodel, gmvs, imts):
     """
-    :param assets: a list of assets on the same site
+    :param assets: assets on the same site as records (aid, taxonomy)
     :param riskmodel: a CompositeRiskModel instance
     :params gmvs: hazard on the given site, shape (E, M)
     :param imts: intensity measure types
@@ -42,7 +42,7 @@ def get_assets_ratios(assets, riskmodel, gmvs, imts):
     """
     imti = {imt: i for i, imt in enumerate(imts)}
     tdict = riskmodel.get_taxonomy_dict()  # taxonomy -> taxonomy index
-    assets_by_t = general.groupby(assets, operator.attrgetter('taxonomy'))
+    assets_by_t = general.group_array(assets, 'taxonomy')
     assets_ratios = []
     for taxo, rm in riskmodel.items():
         t = tdict[taxo]
@@ -78,9 +78,13 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
     riskmodel = param['riskmodel']
     L = len(riskmodel.lti)
     N = len(srcfilter.sitecol.complete)
-    mon = monitor('getting assets', measuremem=False)
-    with datastore.read(srcfilter.filename) as dstore:
-        assgetter = getters.AssetGetter(dstore)
+    tagnames = param['aggregate_by']
+    with monitor('getting assets'):
+        with datastore.read(srcfilter.filename) as dstore:
+            assetcol = dstore['assetcol']
+            avalues = assetcol.get_values()
+            tagidxs = assetcol.get_tagidxs(tagnames)
+            assets_by_sid = assetcol.get_assets_by_sid()
     for rupgetter in rupgetters:
         getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
         with monitor('getting hazard'):
@@ -91,33 +95,29 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
         imts = getter.imts
         events = rupgetter.get_eid_rlz()
         eid2idx = {eid: idx for idx, eid in enumerate(events['eid'])}
-        tagnames = param['aggregate_by']
-        shape = assgetter.tagcol.agg_shape((len(events), L), tagnames)
+        shape = assetcol.tagcol.agg_shape((len(events), L), tagnames)
         elt_dt = [('eid', U64), ('rlzi', U16), ('loss', (F32, shape[1:]))]
         acc = numpy.zeros(shape, F32)  # shape (E, L, T...)
         if param['avg_losses']:
-            losses_by_A = numpy.zeros((assgetter.num_assets, L), F32)
+            losses_by_A = numpy.zeros_like(avalues)
         else:
             losses_by_A = None
         times = numpy.zeros(N)  # risk time per site_id
         for sid, haz in hazard.items():
             t0 = time.time()
             weights = getter.weights[haz['rlzi']]
-            assets_on_sid, tagidxs = assgetter.get(sid, tagnames)
             eidx = [eid2idx[eid] for eid in haz['eid']]
-            mon.duration += time.time() - t0
-            mon.counts += 1
             with mon_risk:
                 assets_ratios = get_assets_ratios(
-                    assets_on_sid, riskmodel, haz['gmv'], imts)
+                    assets_by_sid[sid], riskmodel, haz['gmv'], imts)
             with mon_agg:
                 for assets, triples in assets_ratios:
                     for lti, (lt, imt, loss_ratios) in enumerate(triples):
                         w = weights[imt]
                         for asset in assets:
-                            aid = asset.ordinal
-                            losses = loss_ratios * asset.value(lt)
-                            acc[(eidx, lti) + tagidxs[aid]] += losses
+                            aid = asset['aid']
+                            losses = loss_ratios * avalues[aid, lti]
+                            acc[(eidx, lti) + tuple(tagidxs[aid])] += losses
                             if param['avg_losses']:
                                 losses_by_A[aid, lti] += losses @ w
                 times[sid] = time.time() - t0
