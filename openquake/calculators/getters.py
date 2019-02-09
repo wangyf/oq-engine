@@ -23,11 +23,10 @@ import mock
 import numpy
 from openquake.baselib import hdf5, datastore, general
 from openquake.hazardlib.gsim.base import ContextMaker, FarAwayRupture
-from openquake.hazardlib import calc, geo, probability_map, stats, valid
+from openquake.hazardlib import calc, geo, probability_map, stats
 from openquake.hazardlib.geo.mesh import Mesh, RectangularMesh
 from openquake.hazardlib.source.rupture import EBRupture, classes
 from openquake.risklib.riskinput import rsi2str
-from openquake.risklib.asset import Asset
 from openquake.commonlib.calc import _gmvs_to_haz_curve
 
 U16 = numpy.uint16
@@ -530,12 +529,12 @@ class RuptureGetter(object):
         :returns: the weights of the ruptures in the getter
         """
         weights = []
-        rup_sids = []
         for rup in self.rup_array:
             sids = src_filter.close_sids(rup, self.trt, rup['mag'])
-            rup_sids.append(sids)
+            # NB: transferring the sids of a getter does not work in
+            # large calculations because of the OverflowError:
+            # cannot serialize a bytes object larger than 4 GiB
             weights.append(weight_by_site[sids].sum())
-        self.rup_sids = rup_sids
         self.weights = numpy.array(weights)
         self.weight = self.weights.sum()
 
@@ -545,18 +544,16 @@ class RuptureGetter(object):
         """
         # NB: can be called only after .set_weights() has been called
         idx = {ri: i for i, ri in enumerate(self.rup_indices)}
-        for block in general.block_splitter(
-                zip(self.rup_indices, self.rup_sids), maxweight,
-                lambda ri_rs: self.weights[idx[ri_rs[0]]]):
+        for block in general.block_splitter(self.rup_indices, maxweight,
+                                            lambda ri: self.weights[idx[ri]]):
             if block:
                 # some indices may have weight 0 and are discarded
-                rup_indices = [ri for ri, rs in block]
+                rup_indices = list(block)
                 rgetter = self.__class__(
                     self.filename, rup_indices, self.grp_id,
                     self.trt, self.samples, self.rlzs_by_gsim)
                 rgetter.weight = sum(self.weights[idx[ri]]
                                      for ri in rup_indices)
-                rgetter.rup_sids = [rs for ri, rs in block]
                 yield rgetter
 
     def get_eid_rlz(self, monitor=None):
@@ -605,12 +602,8 @@ class RuptureGetter(object):
         ebrs = []
         with datastore.read(self.filename) as dstore:
             rupgeoms = dstore['rupgeoms']
-            for i, rec in enumerate(self.rup_array):
-                if hasattr(self, 'rup_sids'):
-                    sids = self.rup_sids[i]
-                    if len(sids) == 0:  # the rupture is far away
-                        continue
-                elif srcfilter.integration_distance:
+            for rec in self.rup_array:
+                if srcfilter.integration_distance:
                     sids = srcfilter.close_sids(rec, self.trt, rec['mag'])
                     if len(sids) == 0:  # the rupture is far away
                         continue
