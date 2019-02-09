@@ -536,12 +536,10 @@ class RuptureGetter(object):
         self.trt = trt
         self.samples = samples
         self.rlzs_by_gsim = rlzs_by_gsim
-        self.rlz2idx = {}
         nr = 0
         rlzi = []
         for rlzs in rlzs_by_gsim.values():
             for rlz in rlzs:
-                self.rlz2idx[rlz] = nr
                 rlzi.append(rlz)
                 nr += 1
         self.rlzs = numpy.array(rlzi)
@@ -570,7 +568,7 @@ class RuptureGetter(object):
 
     @property
     def num_rlzs(self):
-        return len(self.rlz2idx)
+        return len(self.rlzi)
 
     # used in ebrisk
     def set_weights(self, src_filter, num_taxonomies_by_site):
@@ -692,17 +690,6 @@ class RuptureGetter(object):
                 ebr.sids = sids
                 ebrs.append(ebr)
         return ebrs
-
-    def E2R(self, array, rlzi):
-        """
-        :param array: an array of shape (E, ...)
-        :param rlzi: an array of E realization indices
-        :returns: an aggregated array of shape (R, ...)
-        """
-        z = numpy.zeros((self.num_rlzs,) + array.shape[1:], array.dtype)
-        for a, r in zip(array, rlzi):
-            z[self.rlz2idx[r]] += a
-        return z
 
     def __len__(self):
         return len(self.rup_indices)
