@@ -105,6 +105,8 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
         times = numpy.zeros(N)  # risk time per site_id
         for sid, haz in hazard.items():
             t0 = time.time()
+            if sid not in assets_by_sid:  # only for discarded assets
+                continue
             weights = getter.weights[haz['rlzi']]
             eidx = [eid2idx[eid] for eid in haz['eid']]
             with mon_risk:
