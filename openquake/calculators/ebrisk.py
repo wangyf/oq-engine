@@ -171,9 +171,9 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         grp_indices = self.datastore['ruptures'].attrs['grp_indices']
         #num_taxonomies = self.assetcol.num_taxonomies_by_site()
         a_by_s = self.assetcol.get_assets_by_sid()
-        num_assets = numpy.array(
-            [len(a_by_s[sid]) for sid in self.sitecol.sids])
-        smap = parallel.Starmap(weight_ruptures)
+        num_assets = numpy.array(  # number of assets per site
+            [len(a_by_s[sid]) for sid in self.sitecol.complete.sids])
+        smap = parallel.Starmap(weight_ruptures, monitor=self.monitor())
         trt_by_grp = self.csm_info.grp_by("trt")
         samples = self.csm_info.get_samples_by_grp()
         rlzs_by_gsim_grp = self.csm_info.get_rlzs_by_gsim_grp()
@@ -215,6 +215,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
             (rgetters, self.src_filter, self.param, self.monitor()),
             concurrent_tasks=ct, weight=operator.attrgetter('weight'),
             key=operator.attrgetter('grp_id'))
+        rgetters.clear()  # save memory
         return smap.reduce(self.agg_dicts, numpy.zeros(self.N))
 
     def agg_dicts(self, acc, dic):
