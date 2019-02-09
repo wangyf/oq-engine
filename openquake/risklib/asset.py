@@ -442,15 +442,24 @@ class AssetCollection(object):
                 aids_by_tag[tag].add(aid)
         return aids_by_tag
 
-    def get_assets_by_sid(self):
+    def to_array(self, tagnames=[]):
         """
-        :returns: a dictionary of arrays with fields 'aid', 'taxonomy'
+        :returns: an array with fields 'aid', 'sid', 'taxonomy', ...
         """
-        asset_dt = numpy.dtype([('aid', U32), ('taxonomy', U16)])
-        acc = general.AccumDict(accum=[])
-        for aid, rec in enumerate(self.array):
-            acc[rec['site_id']].append((aid, rec['taxonomy']))
-        return {sid: numpy.array(acc[sid], asset_dt) for sid in acc}
+        T = len(tagnames)
+        lts = [(lt, F32) for lt in self.loss_types]
+        asset_dt = [('aid', U32), ('sid', U32), ('taxonomy', U16)] + lts + [
+            ('tagidx', (U16, T))]
+        arr = numpy.zeros(len(self), asset_dt)
+        arr['sid'] = self.array['site_id']
+        arr['taxonomy'] = self.array['taxonomy']
+        for tagname in tagnames:
+            arr[tagname] = self.array[tagname]
+        for new, asset in zip(arr, self):
+            new['aid'] = asset.ordinal
+            for lt in self.loss_types:
+                new[lt] = asset.value(lt)
+        return arr
 
     @property
     def taxonomies(self):
@@ -497,7 +506,12 @@ class AssetCollection(object):
             the values of the exposure aggregated by tagnames as an array
             of shape (T1, T2, ..., L)
         """
-        return self.aggregate_by(list(tagnames), self.get_values())
+        arr = self.to_array()
+        L = len(self.loss_types)
+        values = numpy.zeros((len(self), L), F32)
+        for lti, lt in enumerate(self.loss_types):
+            values[:, lti] = arr[lt]
+        return self.aggregate_by(list(tagnames), values)
 
     def get_tagidxs(self, tagnames):
         """
@@ -506,16 +520,6 @@ class AssetCollection(object):
         tups = [tuple(idx - 1 for idx in rec[tagnames]) if tagnames else ()
                 for rec in self.array]
         return tups
-
-    def get_values(self):
-        """
-        :returns: an array of asset values of shape (A, L)
-        """
-        aval = numpy.zeros((len(self), len(self.loss_types)), F32)  # (A, L)
-        for asset in self:
-            for lti, lt in enumerate(self.loss_types):
-                aval[asset.ordinal, lti] = asset.value(lt)
-        return aval
 
     def reduce(self, site_ids):
         """

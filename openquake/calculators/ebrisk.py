@@ -62,7 +62,7 @@ def weight_ruptures(rupgetter, srcfilter, num_taxonomies, monitor):
     return rupgetter
 
 
-def ebrisk(rupgetters, srcfilter, param, monitor):
+def ebrisk(rupgetters, assets, tagcol, srcfilter, param, monitor):
     """
     :param rupgetter:
         a RuptureGetter instance
@@ -79,12 +79,7 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
     L = len(riskmodel.lti)
     N = len(srcfilter.sitecol.complete)
     tagnames = param['aggregate_by']
-    with monitor('getting assets'):
-        with datastore.read(srcfilter.filename) as dstore:
-            assetcol = dstore['assetcol']
-        avalues = assetcol.get_values()
-        tagidxs = assetcol.get_tagidxs(tagnames)
-        assets_by_sid = assetcol.get_assets_by_sid()
+    assets_by_sid = general.group_array(assets, 'sid')
     for rupgetter in rupgetters:
         getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
         with monitor('getting hazard'):
@@ -95,11 +90,11 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
         imts = getter.imts
         events = rupgetter.get_eid_rlz()
         eid2idx = {eid: idx for idx, eid in enumerate(events['eid'])}
-        shape = assetcol.tagcol.agg_shape((len(events), L), tagnames)
+        shape = tagcol.agg_shape((len(events), L), tagnames)
         elt_dt = [('eid', U64), ('rlzi', U16), ('loss', (F32, shape[1:]))]
         acc = numpy.zeros(shape, F32)  # shape (E, L, T...)
         if param['avg_losses']:
-            losses_by_A = numpy.zeros_like(avalues)
+            losses_by_A = numpy.zeros((len(assets), L), F32)
         else:
             losses_by_A = None
         times = numpy.zeros(N)  # risk time per site_id
@@ -113,15 +108,19 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
                 assets_ratios = get_assets_ratios(
                     assets_by_sid[sid], riskmodel, haz['gmv'], imts)
             with mon_agg:
-                for assets, triples in assets_ratios:
+                for assets_, triples in assets_ratios:
                     for lti, (lt, imt, loss_ratios) in enumerate(triples):
                         w = weights[imt]
-                        for asset in assets:
-                            aid = asset['aid']
-                            losses = loss_ratios * avalues[aid, lti]
-                            acc[(eidx, lti) + tagidxs[aid]] += losses
+                        for asset in assets_:
+                            losses = loss_ratios * asset[lt]
+                            if tagnames:
+                                tagidx = tuple(
+                                    idx - 1 for idx in asset[tagnames])
+                                acc[(eidx, lti) + tagidx] += losses
+                            else:
+                                acc[eidx, lti] += losses
                             if param['avg_losses']:
-                                losses_by_A[aid, lti] += losses @ w
+                                losses_by_A[asset['aid'], lti] += losses @ w
                 times[sid] = time.time() - t0
         with monitor('building event loss table'):
             elt = numpy.fromiter(
@@ -172,9 +171,10 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         nruptures = len(self.datastore['ruptures'])
         grp_indices = self.datastore['ruptures'].attrs['grp_indices']
         #num_taxonomies = self.assetcol.num_taxonomies_by_site()
-        a_by_s = self.assetcol.get_assets_by_sid()
+        self.assets = self.assetcol.to_array()
+        dic = general.countby(self.assets, 'sid')
         num_assets = numpy.array(  # number of assets per site
-            [len(a_by_s.get(sid, [])) for sid in self.sitecol.complete.sids])
+            [dic.get(sid, 0) for sid in self.sitecol.complete.sids])
         smap = parallel.Starmap(weight_ruptures, monitor=self.monitor())
         trt_by_grp = self.csm_info.grp_by("trt")
         samples = self.csm_info.get_samples_by_grp()
@@ -214,7 +214,8 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         ct = self.oqparam.concurrent_tasks or 1
         smap = parallel.Starmap.apply(
             self.core_task.__func__,
-            (rgetters, self.src_filter, self.param, self.monitor()),
+            (rgetters, self.assets, self.assetcol.tagcol, self.src_filter,
+             self.param, self.monitor()),
             concurrent_tasks=ct, weight=operator.attrgetter('weight'),
             key=operator.attrgetter('grp_id'))
         rgetters.clear()  # save memory
