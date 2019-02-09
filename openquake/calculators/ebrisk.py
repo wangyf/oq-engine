@@ -169,7 +169,10 @@ class EbriskCalculator(event_based.EventBasedCalculator):
     def get_rupture_getters(self, hdf5path):
         nruptures = len(self.datastore['ruptures'])
         grp_indices = self.datastore['ruptures'].attrs['grp_indices']
-        num_taxonomies = self.assetcol.num_taxonomies_by_site()
+        #num_taxonomies = self.assetcol.num_taxonomies_by_site()
+        a_by_s = self.assetcol.get_assets_by_sid()
+        num_assets = numpy.array(
+            [len(a_by_s[sid]) for sid in self.sitecol.sids])
         smap = parallel.Starmap(weight_ruptures)
         trt_by_grp = self.csm_info.grp_by("trt")
         samples = self.csm_info.get_samples_by_grp()
@@ -183,7 +186,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
                 rgetter = getters.RuptureGetter(
                     hdf5path, list(indices), grp_id,
                     trt_by_grp[grp_id], samples[grp_id], rlzs_by_gsim)
-                smap.submit(rgetter, self.src_filter, num_taxonomies)
+                smap.submit(rgetter, self.src_filter, num_assets)
         rgetters = list(smap)
         mean_weight = numpy.mean([rg.weight for rg in rgetters])
         send = []
