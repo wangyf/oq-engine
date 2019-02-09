@@ -715,7 +715,7 @@ class HazardCalculator(BaseCalculator):
                     raise ValueError(CORRELATION_MATRIX_TOO_LARGE % nsites)
             elif hasattr(self, 'sitecol') and general.not_equal(
                     self.sitecol.sids, haz_sitecol.sids):
-                self.assetcol = assetcol.reduce(self.sitecol)
+                self.assetcol = assetcol.reduce(self.sitecol.sids)
                 self.datastore['assetcol'] = self.assetcol
                 self.datastore['assetcol/num_taxonomies'] = (
                     self.assetcol.num_taxonomies_by_site())

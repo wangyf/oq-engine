@@ -517,12 +517,12 @@ class AssetCollection(object):
                 aval[asset.ordinal, lti] = asset.value(lt)
         return aval
 
-    def reduce(self, sitecol):
+    def reduce(self, site_ids):
         """
-        :returns: a reduced AssetCollection on the given sitecol
+        :returns: a reduced AssetCollection on the given site IDs
         """
         ok_indices = numpy.sum(
-            [self.array['site_id'] == sid for sid in sitecol.sids],
+            [self.array['site_id'] == sid for sid in site_ids],
             axis=0, dtype=bool)
         new = object.__new__(self.__class__)
         vars(new).update(vars(self))
