@@ -501,11 +501,11 @@ class AssetCollection(object):
 
     def get_tagidxs(self, tagnames):
         """
-        :returns: an array of indices of shape (A, T)
+        :returns: a list of A tuples of indices
         """
-        out = [tuple(idx - 1 for idx in rec[tagnames]) if tagnames else ()
-               for rec in self.array]
-        return numpy.array(out)
+        tups = [tuple(idx - 1 for idx in rec[tagnames]) if tagnames else ()
+                for rec in self.array]
+        return tups
 
     def get_values(self):
         """

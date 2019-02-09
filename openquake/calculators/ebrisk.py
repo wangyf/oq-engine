@@ -82,9 +82,9 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
     with monitor('getting assets'):
         with datastore.read(srcfilter.filename) as dstore:
             assetcol = dstore['assetcol']
-            avalues = assetcol.get_values()
-            tagidxs = assetcol.get_tagidxs(tagnames)
-            assets_by_sid = assetcol.get_assets_by_sid()
+        avalues = assetcol.get_values()
+        tagidxs = assetcol.get_tagidxs(tagnames)
+        assets_by_sid = assetcol.get_assets_by_sid()
     for rupgetter in rupgetters:
         getter = getters.GmfGetter(rupgetter, srcfilter, param['oqparam'])
         with monitor('getting hazard'):
@@ -117,7 +117,7 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
                         for asset in assets:
                             aid = asset['aid']
                             losses = loss_ratios * avalues[aid, lti]
-                            acc[(eidx, lti) + tuple(tagidxs[aid])] += losses
+                            acc[(eidx, lti) + tagidxs[aid]] += losses
                             if param['avg_losses']:
                                 losses_by_A[aid, lti] += losses @ w
                 times[sid] = time.time() - t0
