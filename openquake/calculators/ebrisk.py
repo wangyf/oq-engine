@@ -166,7 +166,9 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         shp = self.get_shape(self.L, self.R)  # shape L, R, T...
         self.datastore.create_dset('agg_losses-rlzs', F32, shp)
 
-    def get_rupture_getters(self, nruptures, grp_indices, hdf5path):
+    def get_rupture_getters(self, hdf5path):
+        nruptures = len(self.datastore['ruptures'])
+        grp_indices = self.datastore['ruptures'].attrs['grp_indices']
         num_taxonomies = self.assetcol.num_taxonomies_by_site()
         smap = parallel.Starmap(weight_ruptures)
         trt_by_grp = self.csm_info.grp_by("trt")
@@ -194,12 +196,8 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         parent = self.datastore.parent
         if parent:
             hdf5path = parent.filename
-            grp_indices = parent['ruptures'].attrs['grp_indices']
-            nruptures = len(parent['ruptures'])
         else:
             hdf5path = self.datastore.hdf5cache()
-            grp_indices = self.datastore['ruptures'].attrs['grp_indices']
-            nruptures = len(self.datastore['ruptures'])
             with hdf5.File(hdf5path, 'r+') as cache:
                 self.datastore.hdf5.copy('weights', cache)
                 self.datastore.hdf5.copy('ruptures', cache)
@@ -207,7 +205,7 @@ class EbriskCalculator(event_based.EventBasedCalculator):
         self.init_logic_tree(self.csm_info)
         smap = parallel.Starmap(
             self.core_task.__func__, monitor=self.monitor())
-        rgetters = self.get_rupture_getters(nruptures, grp_indices, hdf5path)
+        rgetters = self.get_rupture_getters(hdf5path)
         ct = self.oqparam.concurrent_tasks or 1
         smap = parallel.Starmap.apply(
             self.core_task.__func__,

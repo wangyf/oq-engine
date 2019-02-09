@@ -114,7 +114,6 @@ class EventBasedCalculator(base.HazardCalculator):
     def init(self):
         if hasattr(self, 'csm'):
             self.check_floating_spinning()
-        self.rupser = calc.RuptureSerializer(self.datastore)
 
     def init_logic_tree(self, csm_info):
         self.trt_by_grp = csm_info.grp_by("trt")
@@ -145,6 +144,7 @@ class EventBasedCalculator(base.HazardCalculator):
             return src.num_ruptures
 
         logging.info('Building ruptures')
+        self.rupser = calc.RuptureSerializer(self.datastore)
         smap = parallel.Starmap(
             self.build_ruptures.__func__, monitor=self.monitor())
         eff_ruptures = AccumDict(accum=0)  # grp_id => potential ruptures
