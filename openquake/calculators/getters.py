@@ -579,7 +579,7 @@ class RuptureGetter(object):
         rup_sids = []
         for rup in self.rup_array:
             sids = src_filter.close_sids(rup, self.trt, rup['mag'])
-            rup_sids.append(numpy.array(sids, U32))
+            rup_sids.append(sids)
             weights.append(num_taxonomies_by_site[sids].sum())
         self.rup_sids = rup_sids
         self.weights = numpy.array(weights)
