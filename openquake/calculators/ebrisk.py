@@ -79,16 +79,9 @@ def ebrisk(rupgetters, srcfilter, param, monitor):
     L = len(riskmodel.lti)
     N = len(srcfilter.sitecol.complete)
     tagnames = param['aggregate_by']
-    allsids = set()
-    for rupgetter in rupgetters:
-        for sids in rupgetter.rup_sids:
-            allsids.update(sids)
     with monitor('getting assets'):
         with datastore.read(srcfilter.filename) as dstore:
             assetcol = dstore['assetcol']
-            if len(allsids) < len(srcfilter.sitecol):
-                print('----------', len(allsids))
-                assetcol = assetcol.reduce(allsids)
         avalues = assetcol.get_values()
         tagidxs = assetcol.get_tagidxs(tagnames)
         assets_by_sid = assetcol.get_assets_by_sid()
