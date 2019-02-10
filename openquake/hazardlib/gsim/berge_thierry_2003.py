@@ -85,11 +85,10 @@ class BergeThierryEtAl2003SIGMA(GMPE):
         # intensity measure type
         C = self.COEFFS[imt]
 
-        # clip distance at 4 km, minimum distance for which the equation is
-        # valid (see section 2.2.4, page 201). This also avoids singularity
-        # in the equation
+        # clip distance at 7 km, as per comment in SIGMA deliverable D4-18,
+        # section 3.1, p.22)
         rhypo = dists.rhypo
-        rhypo[rhypo < 4.] = 4.
+        rhypo[rhypo < 7.] = 7.
 
         mean = C['a'] * rup.mag + C['b'] * rhypo - np.log10(rhypo)
 
