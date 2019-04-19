@@ -126,84 +126,46 @@ class CompositeRiskModel(collections.Mapping):
                 else {})
         crm = dstore.getitem('risk_model')
         # building dictionaries riskid -> loss_type -> risk_func
-        fragdict, vulndict, consdict, retrodict = (
-            AccumDict(), AccumDict(), AccumDict(), AccumDict())
-        fragdict.limit_states = crm.attrs['limit_states']
+        riskdict = AccumDict()
+        riskdict.limit_states = crm.attrs['limit_states']
         for quoted_id, rm in crm.items():
             riskid = unquote_plus(quoted_id)
-            fragdict[riskid] = {}
-            vulndict[riskid] = {}
-            consdict[riskid] = {}
-            retrodict[riskid] = {}
+            riskdict[riskid] = {}
             for lt_kind in rm:
                 lt, kind = lt_kind.rsplit('-', 1)
                 rf = dstore['risk_model/%s/%s' % (quoted_id, lt_kind)]
                 if kind == 'consequence':
-                    consdict[riskid][lt, kind] = rf
+                    riskdict[riskid][lt, kind] = rf
                 elif kind == 'fragility':  # rf is a FragilityFunctionList
                     try:
                         rf = rf.build(
-                            fragdict.limit_states,
+                            riskdict.limit_states,
                             oqparam.continuous_fragility_discretization,
                             oqparam.steps_per_interval)
                     except ValueError as err:
                         raise ValueError('%s: %s' % (riskid, err))
-                    fragdict[riskid][lt, kind] = rf
+                    riskdict[riskid][lt, kind] = rf
                 else:  # rf is a vulnerability function
                     rf.init()
                     if lt.endswith('_retrofitted'):
                         # strip _retrofitted, since len('_retrofitted') = 12
-                        retrodict[riskid][lt[:-12], kind] = rf
+                        riskdict[riskid][lt[:-12], kind] = rf
                     else:
-                        vulndict[riskid][lt, kind] = rf
-        return cls(oqparam, tmap, fragdict, vulndict, consdict, retrodict)
+                        riskdict[riskid][lt, kind] = rf
+        return cls(oqparam, tmap, riskdict)
 
-    def __init__(self, oqparam, tmap, fragdict, vulndict, consdict, retrodict):
+    def __init__(self, oqparam, tmap, riskdict):
         self.tmap = tmap
         self.damage_states = []
         self._riskmodels = {}  # riskid -> riskmodel
-        self.consequences = sum(len(vals) for vals in consdict.values())
-        if sum(len(v) for v in fragdict.values()):
-            # classical_damage/scenario_damage calculator
-            if oqparam.calculation_mode in ('classical', 'scenario'):
-                # case when the risk files are in the job_hazard.ini file
-                oqparam.calculation_mode += '_damage'
-                if 'exposure' not in oqparam.inputs:
-                    raise RuntimeError(
-                        'There are risk files in %r but not '
-                        'an exposure' % oqparam.inputs['job_ini'])
-            self.damage_states = ['no_damage'] + list(fragdict.limit_states)
-            for riskid, ffs_by_lt in fragdict.items():
-                self._riskmodels[riskid] = (
-                    riskmodels.get_riskmodel(
-                        riskid, oqparam, fragility_functions=ffs_by_lt,
-                        vulnerability_functions=vulndict[riskid],
-                        consequence_functions=consdict[riskid]))
-            self.kind = 'fragility'
-        elif oqparam.calculation_mode.endswith('_bcr'):
-            # classical_bcr calculator
-            for (riskid, vf_orig), (riskid_, vf_retro) in \
-                    zip(sorted(vulndict.items()), sorted(retrodict.items())):
-                assert riskid == riskid_  # same IDs
-                self._riskmodels[riskid] = (
-                    riskmodels.get_riskmodel(
-                        riskid, oqparam,
-                        vulnerability_functions_orig=vf_orig,
-                        vulnerability_functions_retro=vf_retro))
-            self.kind = 'vulnerability'
-        else:
-            # classical, event based and scenario calculators
-            for riskid, vfs in vulndict.items():
-                for vf in vfs.values():
+        for riskid, risk_functions in riskdict.items():
+            self._riskmodels[riskid] = rm = riskmodels.get_riskmodel(
+                riskid, oqparam, risk_functions=risk_functions)
+            for vf in rm.risk_functions.values():
+                if hasattr(vf, 'seed'):
                     # set the seed; this is important for the case of
                     # VulnerabilityFunctionWithPMF
                     vf.seed = oqparam.random_seed
-                self._riskmodels[riskid] = (
-                    riskmodels.get_riskmodel(
-                        riskid, oqparam, fragility_functions=vulndict[riskid],
-                        vulnerability_functions=vfs))
-            self.kind = 'vulnerability'
-
         self.init(oqparam)
 
     def init(self, oqparam):
@@ -277,9 +239,8 @@ class CompositeRiskModel(collections.Mapping):
                         ratios = rm.loss_ratios[loss_type]
                         allratios.append(ratios)
                         curve_resolutions.add(len(ratios))
-                        lines.append('%s %d' % (
-                            rm.vulnerability_functions[
-                                loss_type, 'vulnerability'], len(ratios)))
+                        rf = rm.risk_functions[loss_type, 'vulnerability']
+                        lines.append('%s %d' % (rf, len(ratios)))
                 if len(curve_resolutions) > 1:
                     # number of loss ratios is not the same for all taxonomies:
                     # then use the longest array; see classical_risk case_5

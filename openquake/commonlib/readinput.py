@@ -915,9 +915,8 @@ def get_risk_model(oqparam):
         an :class:`openquake.commonlib.oqvalidation.OqParam` instance
     """
     tmap = _get_taxonomy_mapping(oqparam.inputs)
-    fragdict = get_risk_models(oqparam, 'fragility')
-    vulndict = get_risk_models(oqparam, 'vulnerability')
-    consdict = get_risk_models(oqparam, 'consequence')
+    riskdict = get_risk_models(oqparam)
+    '''
     if not tmap:  # the risk ids are the taxonomies already
         d = dict(ids=['?'], weights=[1.0])
         for risk_id in set(fragdict) | set(vulndict) | set(consdict):
@@ -934,16 +933,9 @@ def get_risk_model(oqparam):
                         'The damage states in %s are different from the '
                         'damage states in the fragility functions, %s'
                         % (c, fragdict.limit_states))
-    dic = {}
-    dic.update(fragdict)
-    dic.update(vulndict)
-    oqparam.set_risk_imtls(dic)
-    if oqparam.calculation_mode.endswith('_bcr'):
-        retro = get_risk_models(oqparam, 'vulnerability_retrofitted')
-    else:
-        retro = {}
-    return riskinput.CompositeRiskModel(
-        oqparam, tmap, fragdict, vulndict, consdict, retro)
+    '''
+    oqparam.set_risk_imtls(riskdict)
+    return riskinput.CompositeRiskModel(oqparam, tmap, riskdict)
 
 
 def get_exposure(oqparam):
