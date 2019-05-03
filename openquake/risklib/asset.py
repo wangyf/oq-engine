@@ -29,6 +29,13 @@ from openquake.hazardlib import valid, nrml, geo, InvalidFile
 from openquake.risklib import countries
 
 
+def read_csv(fname, sep=','):
+    with open(fname, encoding='utf-8') as fileobj:
+        fields = [f.strip() for f in next(fileobj).split(sep)]
+        data = [tuple(line.split(sep)) for line in fileobj]
+    return numpy.array(data, [(f, hdf5.vstr) for f in fields])
+
+
 class CostCalculator(object):
     """
     Return the value of an asset for the given loss type depending
@@ -915,36 +922,38 @@ class Exposure(object):
                         (fname, sorted(expected_header), sorted(header)))
         occupancy_periods = self.occupancy_periods.split()
         for fname in self.datafiles:
-            with open(fname, encoding='utf-8') as f:
-                for i, dic in enumerate(csv.DictReader(f), 1):
-                    asset = Node('asset', lineno=i)
-                    with context(fname, asset):
-                        asset['id'] = dic['id']
-                        asset['number'] = valid.positivefloat(dic['number'])
-                        asset['taxonomy'] = dic['taxonomy']
-                        if 'area' in dic:  # optional attribute
-                            asset['area'] = dic['area']
-                        loc = Node('location',
-                                   dict(lon=valid.longitude(dic['lon']),
-                                        lat=valid.latitude(dic['lat'])))
-                        costs = Node('costs')
-                        for cost in self.cost_types['name']:
-                            a = dict(type=cost, value=dic[cost])
-                            if 'retrofitted' in dic:
-                                a['retrofitted'] = dic['retrofitted']
-                            costs.append(Node('cost', a))
-                        occupancies = Node('occupancies')
-                        for period in occupancy_periods:
-                            a = dict(occupants=float(dic[period]),
-                                     period=period)
-                            occupancies.append(Node('occupancy', a))
-                        tags = Node('tags')
-                        for tagname in self.tagcol.tagnames:
-                            if tagname not in (
-                                    'taxonomy', 'exposure', 'country'):
-                                tags.attrib[tagname] = dic[tagname]
-                        asset.nodes.extend([loc, costs, occupancies, tags])
-                    yield asset
+            data = read_csv(fname)
+            fields = data.dtype.names
+            for i, dic in enumerate(data, 1):
+                asset = Node('asset', lineno=i)
+                with context(fname, asset):
+                    asset['id'] = dic['id']
+                    asset['number'] = valid.positivefloat(dic['number'])
+                    asset['taxonomy'] = dic['taxonomy']
+                    if 'area' in fields:  # optional attribute
+                        asset['area'] = valid.positivefloat(dic['area'])
+                    loc = Node('location',
+                               dict(lon=valid.longitude(dic['lon']),
+                                    lat=valid.latitude(dic['lat'])))
+                    costs = Node('costs')
+                    for cost in self.cost_types['name']:
+                        a = dict(type=cost, value=dic[cost])
+                        if 'retrofitted' in fields:
+                            a['retrofitted'] = valid.positivefloat(
+                                dic['retrofitted'])
+                        costs.append(Node('cost', a))
+                    occupancies = Node('occupancies')
+                    for period in occupancy_periods:
+                        a = dict(occupants=float(dic[period]),
+                                 period=period)
+                        occupancies.append(Node('occupancy', a))
+                    tags = Node('tags')
+                    for tagname in self.tagcol.tagnames:
+                        if tagname not in (
+                                'taxonomy', 'exposure', 'country'):
+                            tags.attrib[tagname] = dic[tagname]
+                    asset.nodes.extend([loc, costs, occupancies, tags])
+                yield asset
 
     def _populate_from(self, asset_nodes, param, check_dupl):
         asset_refs = set()
