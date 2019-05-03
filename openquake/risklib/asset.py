@@ -786,8 +786,12 @@ fdtype = {'lon': valid.longitude, 'lat': valid.latitude,
 def read_csv(fname, fdtype, sep=','):
     with open(fname, encoding='utf-8') as fileobj:
         fields = [f.strip() for f in next(fileobj).split(sep)]
-        dt = [(f, fdtype.get(f, hdf5.vstr)) for f in fields]
-        data = [line.split(sep) for line in fileobj]
+        convs = [fdtype.get(field, lambda x: x) for field in fields]
+        data = []
+        for line in fileobj:
+            tup = tuple(conv(val) for conv, val in zip(convs, line.split(sep)))
+            data.append(tup)
+    dt = [(f, float if f in fdtype else hdf5.vstr) for f in fields]
     return numpy.array(data, dt)
 
 
