@@ -37,34 +37,34 @@ def read_csv(self, fname, sep=','):
     data = numpy.array(data, [(f, hdf5.vstr) for f in fields])
     fields = data.dtype.names
     assets = []
-    for i, dic in enumerate(data, 1):
+    for i, rec in enumerate(data, 1):
         asset = Node('asset', lineno=i)
         with context(fname, asset):
-            asset['id'] = dic['id']
-            asset['number'] = valid.positivefloat(dic['number'])
-            asset['taxonomy'] = dic['taxonomy']
+            asset['id'] = rec['id']
+            asset['number'] = valid.positivefloat(rec['number'])
+            asset['taxonomy'] = rec['taxonomy']
             if 'area' in fields:  # optional attribute
-                asset['area'] = valid.positivefloat(dic['area'])
+                asset['area'] = valid.positivefloat(rec['area'])
             loc = Node('location',
-                       dict(lon=valid.longitude(dic['lon']),
-                            lat=valid.latitude(dic['lat'])))
+                       dict(lon=valid.longitude(rec['lon']),
+                            lat=valid.latitude(rec['lat'])))
             costs = Node('costs')
             for cost in self.cost_types['name']:
-                a = dict(type=cost, value=dic[cost])
+                a = dict(type=cost, value=rec[cost])
                 if 'retrofitted' in fields:
                     a['retrofitted'] = valid.positivefloat(
-                        dic['retrofitted'])
+                        rec['retrofitted'])
                 costs.append(Node('cost', a))
             occupancies = Node('occupancies')
             for period in occupancy_periods:
-                a = dict(occupants=float(dic[period]),
+                a = dict(occupants=float(rec[period]),
                          period=period)
                 occupancies.append(Node('occupancy', a))
             tags = Node('tags')
             for tagname in self.tagcol.tagnames:
                 if tagname not in (
                         'taxonomy', 'exposure', 'country'):
-                    tags.attrib[tagname] = dic[tagname]
+                    tags.attrib[tagname] = rec[tagname]
             asset.nodes.extend([loc, costs, occupancies, tags])
         assets.append(asset)
     return assets
@@ -864,6 +864,9 @@ class Exposure(object):
                 prefix = ''
             smap.submit(fname, param, prefix, tagcol)
         exposure_by = smap.reduce()
+        tagnames = [set(exposure_by[fname][0].tagcol.tagnames)
+                    for fname in fnames]
+        param['common_tagnames'] = set.intersection(*tagnames)
         exp = None
         for fname in fnames:
             exposure, assets = exposure_by[fname]
@@ -871,7 +874,6 @@ class Exposure(object):
             param['asset_prefix'] = exposure.asset_prefix
             param['relevant_cost_types'] = (
                 set(exposure.cost_types['name']) - set(['occupants']))
-            exposure._populate_from(assets, param)
             if exp is None:  # first time
                 exp = exposure
                 exp.description = 'Composite exposure[%d]' % len(fnames)
@@ -885,6 +887,7 @@ class Exposure(object):
                 exp.assets.extend(exposure.assets)
                 exp.asset_refs.extend(exposure.asset_refs)
                 exp.tagcol.extend(exposure.tagcol)
+            exp._populate_from(assets, param)
         exp.exposures = [os.path.splitext(os.path.basename(f))[0]
                          for f in fnames]
         return exp
@@ -963,6 +966,7 @@ class Exposure(object):
             self._add_asset(idx, asset_node, param)
 
     def _add_asset(self, idx, asset_node, param):
+        common = param['common_tagnames']
         values = {}
         deductibles = {}
         insurance_limits = {}
@@ -995,7 +999,8 @@ class Exposure(object):
                 param['out_of_region'] += 1
                 return
             tagnode = getattr(asset_node, 'tags', None)
-            dic = {} if tagnode is None else tagnode.attrib.copy()
+            dic = {} if tagnode is None else {
+                k: v for k, v in tagnode.attrib.items() if k in common}
             dic['taxonomy'] = taxonomy
             idxs = self.tagcol.add_tags(dic, prefix)
         try:
