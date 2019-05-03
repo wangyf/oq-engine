@@ -847,6 +847,14 @@ class Exposure(object):
         allargs = []
         tagcol = _minimal_tagcol(fnames, by_country)
         smap = parallel.Starmap(Exposure.read_exp, allargs)
+        param = {'calculation_mode': calculation_mode}
+        param['check_dupl'] = check_dupl
+        param['out_of_region'] = 0
+        if region_constraint:
+            param['region'] = wkt.loads(region_constraint)
+        else:
+            param['region'] = None
+        param['ignore_missing_costs'] = set(ignore_missing_costs)
         for i, fname in enumerate(fnames, 1):
             if by_country and len(fnames) > 1:
                 prefix = prefix2cc['E%02d_' % i] + '_'
@@ -854,12 +862,16 @@ class Exposure(object):
                 prefix = 'E%02d_' % i
             else:
                 prefix = ''
-            smap.submit(fname, calculation_mode, region_constraint,
-                        ignore_missing_costs, check_dupl, prefix, tagcol)
+            smap.submit(fname, param, prefix, tagcol)
         exposure_by = smap.reduce()
         exp = None
         for fname in fnames:
-            exposure = exposure_by[fname]
+            exposure, assets = exposure_by[fname]
+            param['fname'] = fname
+            param['asset_prefix'] = exposure.asset_prefix
+            param['relevant_cost_types'] = (
+                set(exposure.cost_types['name']) - set(['occupants']))
+            exposure._populate_from(assets, param)
             if exp is None:  # first time
                 exp = exposure
                 exp.description = 'Composite exposure[%d]' % len(fnames)
@@ -878,36 +890,19 @@ class Exposure(object):
         return exp
 
     @staticmethod
-    def read_exp(fname, calculation_mode='', region_constraint='',
-                 ignore_missing_costs=(), check_dupl=True, asset_prefix='',
-                 tagcol=None, monitor=None):
+    def read_exp(fname, param, asset_prefix, tagcol=None, monitor=None):
         logging.info('Reading %s', fname)
         exposure, assets = _get_exposure(fname)
+        exposure.asset_prefix = asset_prefix
         assets.nodes.extend(exposure._read_csv())
-        param = {'calculation_mode': calculation_mode}
-        param['asset_prefix'] = asset_prefix
-        param['out_of_region'] = 0
-        if region_constraint:
-            param['region'] = wkt.loads(region_constraint)
-        else:
-            param['region'] = None
-        param['fname'] = fname
-        param['ignore_missing_costs'] = set(ignore_missing_costs)
         if tagcol:
             exposure.tagcol = tagcol
-        param['relevant_cost_types'] = set(exposure.cost_types['name']) - set(
-            ['occupants'])
-        exposure._populate_from(assets, param, check_dupl)
         if param['region'] and param['out_of_region']:
             logging.info('Discarded %d assets outside the region',
                          param['out_of_region'])
-        if len(exposure.assets) == 0:
+        if len(assets) == 0:
             raise RuntimeError('Could not find any asset within the region!')
-        # sanity checks
-        values = any(len(ass.values) + ass.number for ass in exposure.assets)
-        assert values, 'Could not find any value??'
-        exposure.param = param
-        return {fname: exposure}
+        return {fname: (exposure, assets)}
 
     @staticmethod
     def read_headers(fnames):
@@ -956,13 +951,13 @@ class Exposure(object):
         for fname in self.datafiles:
             yield from read_csv(self, fname)
 
-    def _populate_from(self, asset_nodes, param, check_dupl):
+    def _populate_from(self, asset_nodes, param):
         asset_refs = set()
         for idx, asset_node in enumerate(asset_nodes):
             asset_id = asset_node['id']
             # check_dupl is False only in oq prepare_site_model since
             # in that case we are only interested in the asset locations
-            if check_dupl and asset_id in asset_refs:
+            if param['check_dupl'] and asset_id in asset_refs:
                 raise nrml.DuplicatedID(asset_id)
             asset_refs.add(param['asset_prefix'] + asset_id)
             self._add_asset(idx, asset_node, param)
