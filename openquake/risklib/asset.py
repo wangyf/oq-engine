@@ -846,6 +846,7 @@ class Exposure(object):
             prefix = ''
         allargs = []
         tagcol = _minimal_tagcol(fnames, by_country)
+        smap = parallel.Starmap(Exposure.read_exp, allargs)
         for i, fname in enumerate(fnames, 1):
             if by_country and len(fnames) > 1:
                 prefix = prefix2cc['E%02d_' % i] + '_'
@@ -853,14 +854,12 @@ class Exposure(object):
                 prefix = 'E%02d_' % i
             else:
                 prefix = ''
-            exposure_assets = _get_exposure(fname)
-            exposure_assets[1].nodes.extend(exposure_assets[0]._read_csv())
-            allargs.append((fname, exposure_assets, calculation_mode,
-                            region_constraint, ignore_missing_costs,
-                            check_dupl, prefix, tagcol))
+            smap.submit(fname, calculation_mode, region_constraint,
+                        ignore_missing_costs, check_dupl, prefix, tagcol)
+        exposure_by = smap.reduce()
         exp = None
-        for exposure in parallel.Starmap(
-                Exposure.read_exp, allargs, distribute='no'):
+        for fname in fnames:
+            exposure = exposure_by[fname]
             if exp is None:  # first time
                 exp = exposure
                 exp.description = 'Composite exposure[%d]' % len(fnames)
@@ -879,10 +878,12 @@ class Exposure(object):
         return exp
 
     @staticmethod
-    def read_exp(fname, exposure_assets, calculation_mode='',
-                 region_constraint='', ignore_missing_costs=(),
-                 check_dupl=True, asset_prefix='', tagcol=None, monitor=None):
+    def read_exp(fname, calculation_mode='', region_constraint='',
+                 ignore_missing_costs=(), check_dupl=True, asset_prefix='',
+                 tagcol=None, monitor=None):
         logging.info('Reading %s', fname)
+        exposure, assets = _get_exposure(fname)
+        assets.nodes.extend(exposure._read_csv())
         param = {'calculation_mode': calculation_mode}
         param['asset_prefix'] = asset_prefix
         param['out_of_region'] = 0
@@ -892,14 +893,11 @@ class Exposure(object):
             param['region'] = None
         param['fname'] = fname
         param['ignore_missing_costs'] = set(ignore_missing_costs)
-        exposure, asset_nodes = exposure_assets
         if tagcol:
             exposure.tagcol = tagcol
         param['relevant_cost_types'] = set(exposure.cost_types['name']) - set(
             ['occupants'])
-        #if asset_nodes:  # this is useful for the GED4ALL import script
-        #    return nodes
-        exposure._populate_from(asset_nodes, param, check_dupl)
+        exposure._populate_from(assets, param, check_dupl)
         if param['region'] and param['out_of_region']:
             logging.info('Discarded %d assets outside the region',
                          param['out_of_region'])
@@ -909,7 +907,7 @@ class Exposure(object):
         values = any(len(ass.values) + ass.number for ass in exposure.assets)
         assert values, 'Could not find any value??'
         exposure.param = param
-        return exposure
+        return {fname: exposure}
 
     @staticmethod
     def read_headers(fnames):
