@@ -32,8 +32,8 @@ from openquake.risklib import countries
 def read_csv(self, fname, sep=','):
     occupancy_periods = self.occupancy_periods.split()
     with open(fname, encoding='utf-8') as fileobj:
-        fields = [f.strip() for f in next(fileobj).split(sep)]
-        data = [tuple(line.split(sep)) for line in fileobj]
+        fields = [f.strip() for f in next(fileobj).rstrip().split(sep)]
+        data = [tuple(line.rstrip().split(sep)) for line in fileobj]
     data = numpy.array(data, [(f, hdf5.vstr) for f in fields])
     fields = data.dtype.names
     for i, dic in enumerate(data, 1):
