@@ -36,6 +36,7 @@ def read_csv(self, fname, sep=','):
         data = [tuple(line.rstrip().split(sep)) for line in fileobj]
     data = numpy.array(data, [(f, hdf5.vstr) for f in fields])
     fields = data.dtype.names
+    assets = []
     for i, dic in enumerate(data, 1):
         asset = Node('asset', lineno=i)
         with context(fname, asset):
@@ -65,7 +66,8 @@ def read_csv(self, fname, sep=','):
                         'taxonomy', 'exposure', 'country'):
                     tags.attrib[tagname] = dic[tagname]
             asset.nodes.extend([loc, costs, occupancies, tags])
-        yield asset
+        assets.append(asset)
+    return assets
 
 
 class CostCalculator(object):
@@ -851,9 +853,11 @@ class Exposure(object):
                 prefix = 'E%02d_' % i
             else:
                 prefix = ''
-            allargs.append((fname, calculation_mode, region_constraint,
-                            ignore_missing_costs, asset_nodes, check_dupl,
-                            prefix, tagcol))
+            exposure_assets = _get_exposure(fname)
+            exposure_assets[1].nodes.extend(exposure_assets[0]._read_csv())
+            allargs.append((fname, exposure_assets, calculation_mode,
+                            region_constraint, ignore_missing_costs,
+                            check_dupl, prefix, tagcol))
         exp = None
         for exposure in parallel.Starmap(
                 Exposure.read_exp, allargs, distribute='no'):
@@ -875,9 +879,9 @@ class Exposure(object):
         return exp
 
     @staticmethod
-    def read_exp(fname, calculation_mode='', region_constraint='',
-                 ignore_missing_costs=(), asset_nodes=False, check_dupl=True,
-                 asset_prefix='', tagcol=None, monitor=None):
+    def read_exp(fname, exposure_assets, calculation_mode='',
+                 region_constraint='', ignore_missing_costs=(),
+                 check_dupl=True, asset_prefix='', tagcol=None, monitor=None):
         logging.info('Reading %s', fname)
         param = {'calculation_mode': calculation_mode}
         param['asset_prefix'] = asset_prefix
@@ -888,15 +892,14 @@ class Exposure(object):
             param['region'] = None
         param['fname'] = fname
         param['ignore_missing_costs'] = set(ignore_missing_costs)
-        exposure, assetnodes = _get_exposure(param['fname'])
+        exposure, asset_nodes = exposure_assets
         if tagcol:
             exposure.tagcol = tagcol
         param['relevant_cost_types'] = set(exposure.cost_types['name']) - set(
             ['occupants'])
-        nodes = assetnodes if assetnodes else exposure._read_csv()
-        if asset_nodes:  # this is useful for the GED4ALL import script
-            return nodes
-        exposure._populate_from(nodes, param, check_dupl)
+        #if asset_nodes:  # this is useful for the GED4ALL import script
+        #    return nodes
+        exposure._populate_from(asset_nodes, param, check_dupl)
         if param['region'] and param['out_of_region']:
             logging.info('Discarded %d assets outside the region',
                          param['out_of_region'])
