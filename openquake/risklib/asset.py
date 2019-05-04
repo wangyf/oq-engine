@@ -29,47 +29,6 @@ from openquake.hazardlib import valid, nrml, geo, InvalidFile
 from openquake.risklib import countries
 
 
-def read_csv(self, fname, sep=','):
-    occupancy_periods = self.occupancy_periods.split()
-    with open(fname, encoding='utf-8') as fileobj:
-        fields = [f.strip() for f in next(fileobj).rstrip().split(sep)]
-        data = [tuple(line.rstrip().split(sep)) for line in fileobj]
-    data = numpy.array(data, [(f, hdf5.vstr) for f in fields])
-    fields = data.dtype.names
-    assets = []
-    for i, rec in enumerate(data, 1):
-        asset = Node('asset', lineno=i)
-        with context(fname, asset):
-            asset['id'] = rec['id']
-            asset['number'] = valid.positivefloat(rec['number'])
-            asset['taxonomy'] = rec['taxonomy']
-            if 'area' in fields:  # optional attribute
-                asset['area'] = valid.positivefloat(rec['area'])
-            loc = Node('location',
-                       dict(lon=valid.longitude(rec['lon']),
-                            lat=valid.latitude(rec['lat'])))
-            costs = Node('costs')
-            for cost in self.cost_types['name']:
-                a = dict(type=cost, value=rec[cost])
-                if 'retrofitted' in fields:
-                    a['retrofitted'] = valid.positivefloat(
-                        rec['retrofitted'])
-                costs.append(Node('cost', a))
-            occupancies = Node('occupancies')
-            for period in occupancy_periods:
-                a = dict(occupants=float(rec[period]),
-                         period=period)
-                occupancies.append(Node('occupancy', a))
-            tags = Node('tags')
-            for tagname in self.tagcol.tagnames:
-                if tagname not in (
-                        'taxonomy', 'exposure', 'country'):
-                    tags.attrib[tagname] = rec[tagname]
-            asset.nodes.extend([loc, costs, occupancies, tags])
-        assets.append(asset)
-    return assets
-
-
 class CostCalculator(object):
     """
     Return the value of an asset for the given loss type depending
@@ -920,6 +879,46 @@ class Exposure(object):
         for field, value in zip(self.fields, values):
             setattr(self, field, value)
 
+    def read_assets_from_csv(self, fname, sep=','):
+        occupancy_periods = self.occupancy_periods.split()
+        with open(fname, encoding='utf-8') as fileobj:
+            reader = csv.reader(fileobj, delimiter=sep)
+            fields = next(reader)
+            data = numpy.array([tuple(row) for row in reader],
+                               [(f, object) for f in fields])
+        assets = []
+        for i, rec in enumerate(data, 1):
+            asset = Node('asset', lineno=i)
+            with context(fname, asset):
+                asset['id'] = rec['id']
+                asset['number'] = valid.positivefloat(rec['number'])
+                asset['taxonomy'] = rec['taxonomy']
+                if 'area' in fields:  # optional attribute
+                    asset['area'] = valid.positivefloat(rec['area'])
+                loc = Node('location',
+                           dict(lon=valid.longitude(rec['lon']),
+                                lat=valid.latitude(rec['lat'])))
+                costs = Node('costs')
+                for cost in self.cost_types['name']:
+                    a = dict(type=cost, value=rec[cost])
+                    if 'retrofitted' in fields:
+                        a['retrofitted'] = valid.positivefloat(
+                            rec['retrofitted'])
+                    costs.append(Node('cost', a))
+                occupancies = Node('occupancies')
+                for period in occupancy_periods:
+                    a = dict(occupants=float(rec[period]),
+                             period=period)
+                    occupancies.append(Node('occupancy', a))
+                tags = Node('tags')
+                for tagname in self.tagcol.tagnames:
+                    if tagname not in (
+                            'taxonomy', 'exposure', 'country'):
+                        tags.attrib[tagname] = rec[tagname]
+                asset.nodes.extend([loc, costs, occupancies, tags])
+            assets.append(asset)
+        return assets
+
     def _csv_header(self):
         """
         Extract the expected CSV header from the exposure metadata
@@ -952,7 +951,7 @@ class Exposure(object):
                         'Unexpected header in %s\nExpected: %s\nGot: %s' %
                         (fname, sorted(expected_header), sorted(header)))
         for fname in self.datafiles:
-            yield from read_csv(self, fname)
+            yield from self.read_assets_from_csv(self, fname)
 
     def _populate_from(self, asset_nodes, param):
         asset_refs = set()
