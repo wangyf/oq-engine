@@ -847,6 +847,12 @@ class Exposure(object):
                 exp.asset_refs.extend(exposure.asset_refs)
                 exp.tagcol.extend(exposure.tagcol)
             exp._populate_from(assets, param)
+            if param['region'] and param['out_of_region']:
+                logging.info('Discarded %d assets outside the region',
+                             param['out_of_region'])
+            if len(exp.assets) == 0:
+                raise RuntimeError(
+                    'Could not find any asset within the region!')
         exp.exposures = [os.path.splitext(os.path.basename(f))[0]
                          for f in fnames]
         return exp
@@ -859,11 +865,6 @@ class Exposure(object):
         assets.nodes.extend(exposure._read_csv())
         if tagcol:
             exposure.tagcol = tagcol
-        if param['region'] and param['out_of_region']:
-            logging.info('Discarded %d assets outside the region',
-                         param['out_of_region'])
-        if len(assets) == 0:
-            raise RuntimeError('Could not find any asset within the region!')
         return {fname: (exposure, assets)}
 
     @staticmethod
