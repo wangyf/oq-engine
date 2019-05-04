@@ -951,7 +951,7 @@ class Exposure(object):
                         'Unexpected header in %s\nExpected: %s\nGot: %s' %
                         (fname, sorted(expected_header), sorted(header)))
         for fname in self.datafiles:
-            yield from self.read_assets_from_csv(self, fname)
+            yield from self.read_assets_from_csv(fname)
 
     def _populate_from(self, asset_nodes, param):
         asset_refs = set()
